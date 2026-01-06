@@ -1,0 +1,34 @@
+projectName: "vox-backend"
+projectNamespace: "voxify"
+image:
+  repository: "docker.merai.app/production/vox_backend"
+  tag: "dmz-green"
+service:
+  type: LoadBalancer
+  port: 8021
+  targetPort: 8080
+healthCheck:
+  enabled: true
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8080
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: 8080
+ingress:
+  enabled: false
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 3
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1024Mi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+nodeSelector:
+  workload-type: prodapp

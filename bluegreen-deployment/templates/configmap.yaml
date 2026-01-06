@@ -1,0 +1,12 @@
+{{- if .Values.configMap.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.projectName }}-config
+  namespace: {{ .Values.projectNamespace }}
+  labels:
+    app: {{ .Values.projectName }}
+    managed-by: helm
+data:
+  {{- toYaml .Values.configMap.data | nindent 2 }}
+{{- end }}

@@ -1,0 +1,107 @@
+# Global settings
+global:
+  environment: production
+  imagePullPolicy: Always
+
+projectName: "myapp"
+projectNamespace: "production"
+projectGroup: "merai_blr1"
+
+# Docker Registry
+registry:
+  url: "docker.merai.app"
+  username: "${CI_REGISTRY_USER}"
+  password: "${CI_REGISTRY_PASSWORD}"
+
+# Image configuration
+image:
+  repository: "docker.merai.app/production/myapp"
+  tag: "latest"
+  pullPolicy: Always
+
+# Replica configuration
+replicaCount:
+  blue: 2
+  green: 2
+
+# Container resources
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+# Horizontal Pod Autoscaler
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+# Service configuration
+service:
+  type: LoadBalancer
+  port: 8080
+  targetPort: 3000
+  annotations: {}
+
+# Ingress configuration
+ingress:
+  enabled: false
+  className: "nginx"
+  annotations: {}
+  hosts: []
+  tls: []
+
+# Environment variables
+env: []
+
+# ConfigMap data
+configMap:
+  enabled: false
+  data: {}
+
+# Health checks
+healthCheck:
+  enabled: true
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 3000
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: 3000
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+# Blue-Green specific settings
+blueGreen:
+  activeVersion: blue
+  canary:
+    enabled: false
+    weight: 10
+
+# Node selection
+nodeSelector: {}
+
+# Tolerations
+tolerations: []
+
+# Affinity
+affinity: {}
+
+# Security context
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  allowPrivilegeEscalation: false

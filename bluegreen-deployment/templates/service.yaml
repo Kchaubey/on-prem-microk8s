@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.projectName }}-service
+  namespace: {{ .Values.projectNamespace }}
+  labels:
+    app: {{ .Values.projectName }}
+    managed-by: helm
+  {{- if .Values.service.annotations }}
+  annotations:
+    {{- toYaml .Values.service.annotations | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+  - port: {{ .Values.service.port }}
+    targetPort: {{ .Values.service.targetPort }}
+    protocol: TCP
+    name: http
+  selector:
+    app: {{ .Values.projectName }}
+    version: {{ .Values.blueGreen.activeVersion }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.projectName }}-green-service
+  namespace: {{ .Values.projectNamespace }}
+  labels:
+    app: {{ .Values.projectName }}
+    version: green
+    managed-by: helm
+spec:
+  type: ClusterIP
+  ports:
+  - port: {{ .Values.service.port }}
+    targetPort: {{ .Values.service.targetPort }}
+    protocol: TCP
+    name: http
+  selector:
+    app: {{ .Values.projectName }}
+    version: green
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.projectName }}-blue-service
+  namespace: {{ .Values.projectNamespace }}
+  labels:
+    app: {{ .Values.projectName }}
+    version: blue
+    managed-by: helm
+spec:
+  type: ClusterIP
+  ports:
+  - port: {{ .Values.service.port }}
+    targetPort: {{ .Values.service.targetPort }}
+    protocol: TCP
+    name: http
+  selector:
+    app: {{ .Values.projectName }}
+    version: blue

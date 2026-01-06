@@ -1,0 +1,33 @@
+projectName: "webapp-poc"
+projectNamespace: "healthjini"
+image:
+  repository: "docker.merai.app/production/webapp_poc"
+  tag: "dmz-green"
+service:
+  type: LoadBalancer
+  port: 8006
+  targetPort: 3000
+healthCheck:
+  enabled: true
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 3000
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: 3000
+ingress:
+  enabled: false
+autoscaling:
+  enabled: false
+  minReplicas: 1
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+nodeSelector:
+  workload-type: prodapp

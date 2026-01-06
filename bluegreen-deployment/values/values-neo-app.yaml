@@ -1,0 +1,32 @@
+projectName: "neo-app"
+projectNamespace: "neuraiq"
+image:
+  repository: "docker.merai.app/production/neo_app"
+  tag: "dmz-green"
+service:
+  type: LoadBalancer
+  port: 8012
+  targetPort: 3000
+healthCheck:
+  enabled: true
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 3000
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: 3000
+ingress:
+  enabled: false
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 3
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi

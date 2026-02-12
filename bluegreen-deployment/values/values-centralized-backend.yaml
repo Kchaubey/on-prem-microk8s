@@ -1,12 +1,31 @@
 projectName: "centralized-backend"
 projectNamespace: "healthjini"
+
 image:
-  repository: "docker.merai.app/production/centralized_backend"
-  tag: "dmz-green"
+  repository: "harbor.k8s.healthjini.ai:30443/production/centralized_backend"
+  tag: "green"
+
+imagePullSecrets:
+  - name: gitlab-registry-secret
+
 service:
-  type: LoadBalancer
+  type: ClusterIP
   port: 8005
   targetPort: 8080
+
+ingress:
+  enabled: true  
+  className: "nginx"  # Use k8s ingress class
+  hosts:
+    - host: "backend.k8s.healthjini.ai"
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: backend-tls
+      hosts:
+        - backend.k8s.healthjini.ai
+
 healthCheck:
   enabled: true
   livenessProbe:
@@ -17,12 +36,12 @@ healthCheck:
     httpGet:
       path: /ready
       port: 8080
-ingress:
-  enabled: false
+
 autoscaling:
   enabled: true
-  minReplicas: 1
-  maxReplicas: 2
+  minReplicas: 2
+  maxReplicas: 3
+
 resources:
   limits:
     cpu: 1000m
@@ -30,5 +49,6 @@ resources:
   requests:
     cpu: 500m
     memory: 512Mi
+
 nodeSelector:
   workload-type: prodapp

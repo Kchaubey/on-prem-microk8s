@@ -8,6 +8,13 @@ image:
 imagePullSecrets:
   - name: gitlab-registry-secret
 
+
+secrets:
+  name: healthjini-backend-secrets
+
+configMap:
+  name: healthjini-backend-config
+
 service:
   type: ClusterIP
   port: 8005

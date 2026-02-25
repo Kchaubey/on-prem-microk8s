@@ -63,6 +63,10 @@ spec:
             {{- end }}
           {{- end }}
 
+          volumeMounts:
+            - name: app-logs
+              mountPath: /app/logs
+
           {{- if .Values.healthCheck.enabled }}
           livenessProbe:
 {{ toYaml .Values.healthCheck.livenessProbe | indent 12 }}
@@ -74,6 +78,10 @@ spec:
           resources:
 {{ toYaml .Values.resources | indent 12 }}
           {{- end }}
+
+      volumes:
+        - name: app-logs
+          emptyDir: {}
 
       imagePullSecrets:
         - name: gitlab-registry-secret

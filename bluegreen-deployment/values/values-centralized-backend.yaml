@@ -70,17 +70,19 @@ resources:
 nodeSelector:
   workload-type: prodapp
 
-# Pod-level security context — fsGroup ensures Prisma/volume file permissions are correct
+# Pod-level security context
+# fsGroup: 1000 ensures Prisma and volume file permissions work correctly for uid 1000
 securityContext:
   fsGroup: 1000
   runAsNonRoot: true
   runAsUser: 1000
   runAsGroup: 1000
 
-# Container-level security context — required to satisfy cluster non-root policy
+# Container-level security context
+# Required to satisfy cluster non-root admission policy
 containerSecurityContext:
   runAsNonRoot: true
   runAsUser: 1000
   runAsGroup: 1000
   allowPrivilegeEscalation: false
-  readOnlyRootFilesystem: false   # Keep false if Prisma needs to write query engine at runtime
+  readOnlyRootFilesystem: false  # Must stay false — Prisma writes query engine at runtime

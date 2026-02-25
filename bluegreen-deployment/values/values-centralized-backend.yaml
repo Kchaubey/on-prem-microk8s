@@ -4,10 +4,10 @@ projectNamespace: "healthjini"
 image:
   repository: "harbor.k8s.healthjini.ai:30443/production/centralized_backend"
   tag: "green"
+  pullPolicy: IfNotPresent
 
 imagePullSecrets:
   - name: gitlab-registry-secret
-
 
 secrets:
   name: healthjini-backend-secrets
@@ -21,8 +21,8 @@ service:
   targetPort: 8080
 
 ingress:
-  enabled: true  
-  className: "nginx"  # Use k8s ingress class
+  enabled: true
+  className: "nginx"
   hosts:
     - host: "backend.k8s.healthjini.ai"
       paths:
@@ -39,10 +39,20 @@ healthCheck:
     httpGet:
       path: /health
       port: 8080
+    initialDelaySeconds: 30
+    timeoutSeconds: 5
+    periodSeconds: 10
+    successThreshold: 1
+    failureThreshold: 3
   readinessProbe:
     httpGet:
       path: /ready
       port: 8080
+    initialDelaySeconds: 10
+    timeoutSeconds: 3
+    periodSeconds: 5
+    successThreshold: 1
+    failureThreshold: 3
 
 autoscaling:
   enabled: true
@@ -60,7 +70,17 @@ resources:
 nodeSelector:
   workload-type: prodapp
 
-# FIX FOR PRISMA PERMISSION ISSUE (K8s only)
-
+# Pod-level security context — fsGroup ensures Prisma/volume file permissions are correct
 securityContext:
   fsGroup: 1000
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+
+# Container-level security context — required to satisfy cluster non-root policy
+containerSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false   # Keep false if Prisma needs to write query engine at runtime

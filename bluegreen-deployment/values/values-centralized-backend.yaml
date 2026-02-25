@@ -59,3 +59,12 @@ resources:
 
 nodeSelector:
   workload-type: prodapp
+
+# FIX FOR PRISMA PERMISSION ISSUE (K8s only)
+
+securityContext:
+  fsGroup: 1000
+
+containerSecurityContext:
+  runAsUser: 0
+  runAsGroup: 0

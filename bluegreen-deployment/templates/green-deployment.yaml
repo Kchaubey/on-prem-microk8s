@@ -34,6 +34,10 @@ spec:
         - name: {{ .Values.projectName }}
           image: "{{ .Values.image.repository }}:green"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if .Values.containerSecurityContext }}
+    securityContext:
+      {{- toYaml .Values.containerSecurityContext | nindent 6 }}
+    {{- end }}
 
           ports:
             - name: http

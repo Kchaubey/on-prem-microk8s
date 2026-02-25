@@ -8,9 +8,9 @@ metadata:
     version: green
     managed-by: helm
 spec:
-  {{ if not .Values.autoscaling.enabled }}
+  {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount.green }}
-  {{ end }}
+  {{- end }}
   selector:
     matchLabels:
       app: {{ .Values.projectName }}
@@ -25,19 +25,16 @@ spec:
         prometheus.io/port: "{{ .Values.service.targetPort }}"
         prometheus.io/path: "/metrics"
     spec:
+
       {{- if .Values.securityContext }}
       securityContext:
-        {{- toYaml .Values.securityContext | nindent 8 }}
+{{ toYaml .Values.securityContext | indent 8 }}
       {{- end }}
 
       containers:
         - name: {{ .Values.projectName }}
           image: "{{ .Values.image.repository }}:green"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          {{- if .Values.containerSecurityContext }}
-    securityContext:
-      {{- toYaml .Values.containerSecurityContext | nindent 6 }}
-    {{- end }}
 
           ports:
             - name: http
@@ -46,7 +43,7 @@ spec:
 
           {{- if .Values.env }}
           env:
-            {{- toYaml .Values.env | nindent 12 }}
+{{ toYaml .Values.env | indent 12 }}
           {{- end }}
 
           {{- if or .Values.secrets.name .Values.configMap.name }}
@@ -63,14 +60,14 @@ spec:
 
           {{- if .Values.healthCheck.enabled }}
           livenessProbe:
-            {{- toYaml .Values.healthCheck.livenessProbe | nindent 12 }}
+{{ toYaml .Values.healthCheck.livenessProbe | indent 12 }}
           readinessProbe:
-            {{- toYaml .Values.healthCheck.readinessProbe | nindent 12 }}
+{{ toYaml .Values.healthCheck.readinessProbe | indent 12 }}
           {{- end }}
 
           {{- if .Values.resources }}
           resources:
-            {{- toYaml .Values.resources | nindent 12 }}
+{{ toYaml .Values.resources | indent 12 }}
           {{- end }}
 
       imagePullSecrets:
@@ -78,15 +75,15 @@ spec:
 
       {{- if .Values.nodeSelector }}
       nodeSelector:
-        {{- toYaml .Values.nodeSelector | nindent 8 }}
+{{ toYaml .Values.nodeSelector | indent 8 }}
       {{- end }}
 
       {{- if .Values.affinity }}
       affinity:
-        {{- toYaml .Values.affinity | nindent 8 }}
+{{ toYaml .Values.affinity | indent 8 }}
       {{- end }}
 
       {{- if .Values.tolerations }}
       tolerations:
-        {{- toYaml .Values.tolerations | nindent 8 }}
+{{ toYaml .Values.tolerations | indent 8 }}
       {{- end }}

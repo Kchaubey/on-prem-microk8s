@@ -1,6 +1,8 @@
 {{- $imageTag := .Values.image.greenTag | default .Values.image.tag | default "latest" -}}
-{{- $secretName := dig "secrets" "name" "" .Values -}}
-{{- $configMapName := dig "configMap" "name" "" .Values -}}
+{{- $secrets := .Values.secrets | default dict -}}
+{{- $configMap := .Values.configMap | default dict -}}
+{{- $secretName := (index $secrets "name") | default "" -}}
+{{- $configMapName := (index $configMap "name") | default "" -}}
 {{- $podSecurityContext := omit (.Values.securityContext | default dict) "allowPrivilegeEscalation" "readOnlyRootFilesystem" "capabilities" "privileged" -}}
 apiVersion: apps/v1
 kind: Deployment

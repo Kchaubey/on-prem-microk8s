@@ -74,6 +74,10 @@ spec:
               mountPath: /app/logs
 
           {{- if .Values.healthCheck.enabled }}
+          {{- if .Values.healthCheck.startupProbe }}
+          startupProbe:
+{{ toYaml .Values.healthCheck.startupProbe | indent 12 }}
+          {{- end }}
           livenessProbe:
 {{ toYaml .Values.healthCheck.livenessProbe | indent 12 }}
           readinessProbe:

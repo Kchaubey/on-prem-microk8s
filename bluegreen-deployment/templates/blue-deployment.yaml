@@ -59,13 +59,13 @@ spec:
 
           {{- if or $secretName $configMapName }}
           envFrom:
-            {{- if $secretName }}
-            - secretRef:
-                name: {{ $secretName }}
-            {{- end }}
             {{- if $configMapName }}
             - configMapRef:
                 name: {{ $configMapName }}
+            {{- end }}
+            {{- if $secretName }}
+            - secretRef:
+                name: {{ $secretName }}
             {{- end }}
           {{- end }}
 

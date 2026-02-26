@@ -1,27 +1,53 @@
 projectName: "webapp-poc"
 projectNamespace: "healthjini"
+
 image:
-  repository: "docker.merai.app/production/webapp_poc"
-  tag: "dmz-green"
+  repository: "harbor.k8s.healthjini.ai:30443/production/webapp_poc"
+  tag: "green"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets:
+  - name: gitlab-registry-secret
+
+secrets:
+  name: ""
+
+configMap:
+  name: ""
+
 service:
-  type: LoadBalancer
+  type: ClusterIP
   port: 8006
   targetPort: 3000
+
+ingress:
+  enabled: false
+
 healthCheck:
   enabled: true
   livenessProbe:
     httpGet:
       path: /health
       port: 3000
+    initialDelaySeconds: 30
+    timeoutSeconds: 5
+    periodSeconds: 10
+    successThreshold: 1
+    failureThreshold: 3
   readinessProbe:
     httpGet:
-      path: /ready
+      path: /health
       port: 3000
-ingress:
-  enabled: false
+    initialDelaySeconds: 10
+    timeoutSeconds: 3
+    periodSeconds: 5
+    successThreshold: 1
+    failureThreshold: 3
+
 autoscaling:
   enabled: false
   minReplicas: 1
+
 resources:
   limits:
     cpu: 500m
@@ -29,5 +55,19 @@ resources:
   requests:
     cpu: 250m
     memory: 256Mi
+
 nodeSelector:
   workload-type: prodapp
+
+securityContext:
+  fsGroup: 1000
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+
+containerSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false

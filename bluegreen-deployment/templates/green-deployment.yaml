@@ -1,3 +1,7 @@
+{{- $imageTag := .Values.image.greenTag | default .Values.image.tag | default "latest" -}}
+{{- $secretName := dig "secrets" "name" "" .Values -}}
+{{- $configMapName := dig "configMap" "name" "" .Values -}}
+{{- $podSecurityContext := omit (.Values.securityContext | default dict) "allowPrivilegeEscalation" "readOnlyRootFilesystem" "capabilities" "privileged" -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -26,15 +30,15 @@ spec:
         prometheus.io/path: "/metrics"
     spec:
 
-      {{- if .Values.securityContext }}
+      {{- if $podSecurityContext }}
       securityContext:
-{{ toYaml .Values.securityContext | indent 8 }}
+{{ toYaml $podSecurityContext | indent 8 }}
       {{- end }}
 
       containers:
         - name: {{ .Values.projectName }}
-          image: "{{ .Values.image.repository }}:green"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          image: "{{ .Values.image.repository }}:{{ $imageTag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy | default "Always" }}
 
           {{- if .Values.containerSecurityContext }}
           securityContext:
@@ -51,15 +55,15 @@ spec:
 {{ toYaml .Values.env | indent 12 }}
           {{- end }}
 
-          {{- if or .Values.secrets.name .Values.configMap.name }}
+          {{- if or $secretName $configMapName }}
           envFrom:
-            {{- if .Values.secrets.name }}
+            {{- if $secretName }}
             - secretRef:
-                name: {{ .Values.secrets.name }}
+                name: {{ $secretName }}
             {{- end }}
-            {{- if .Values.configMap.name }}
+            {{- if $configMapName }}
             - configMapRef:
-                name: {{ .Values.configMap.name }}
+                name: {{ $configMapName }}
             {{- end }}
           {{- end }}
 
@@ -83,8 +87,13 @@ spec:
         - name: app-logs
           emptyDir: {}
 
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+{{ toYaml .Values.imagePullSecrets | indent 8 }}
+      {{- else }}
       imagePullSecrets:
         - name: gitlab-registry-secret
+      {{- end }}
 
       {{- if .Values.nodeSelector }}
       nodeSelector:

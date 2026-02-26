@@ -1,28 +1,54 @@
 projectName: "vox-backend"
 projectNamespace: "voxify"
+
 image:
-  repository: "docker.merai.app/production/vox_backend"
-  tag: "dmz-green"
+  repository: "harbor.k8s.healthjini.ai:30443/production/vox_backend"
+  tag: "green"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets:
+  - name: gitlab-registry-secret
+
+secrets:
+  name: ""
+
+configMap:
+  name: ""
+
 service:
-  type: LoadBalancer
+  type: ClusterIP
   port: 8021
   targetPort: 8080
+
+ingress:
+  enabled: false
+
 healthCheck:
   enabled: true
   livenessProbe:
     httpGet:
       path: /health
       port: 8080
+    initialDelaySeconds: 30
+    timeoutSeconds: 5
+    periodSeconds: 10
+    successThreshold: 1
+    failureThreshold: 3
   readinessProbe:
     httpGet:
-      path: /ready
+      path: /health
       port: 8080
-ingress:
-  enabled: false
+    initialDelaySeconds: 10
+    timeoutSeconds: 3
+    periodSeconds: 5
+    successThreshold: 1
+    failureThreshold: 3
+
 autoscaling:
   enabled: true
   minReplicas: 2
   maxReplicas: 3
+
 resources:
   limits:
     cpu: 1000m
@@ -30,5 +56,19 @@ resources:
   requests:
     cpu: 500m
     memory: 512Mi
+
 nodeSelector:
   workload-type: prodapp
+
+securityContext:
+  fsGroup: 1000
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+
+containerSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false

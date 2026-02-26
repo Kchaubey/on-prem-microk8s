@@ -9,14 +9,17 @@ projectGroup: "merai_blr1"
 
 # Docker Registry
 registry:
-  url: "docker.merai.app"
-  username: "${CI_REGISTRY_USER}"
-  password: "${CI_REGISTRY_PASSWORD}"
+  url: "harbor.k8s.healthjini.ai:30443"
+  username: "${DMZ_REGISTRY_USER}"
+  password: "${DMZ_REGISTRY_PASSWORD}"
 
 # Image configuration
 image:
-  repository: "docker.merai.app/production/myapp"
+  repository: "harbor.k8s.healthjini.ai:30443/production/myapp"
   tag: "latest"
+  # Optional per-slot tags. If unset, both deployments use image.tag.
+  blueTag: ""
+  greenTag: ""
   pullPolicy: Always
 
 # Replica configuration
@@ -43,7 +46,7 @@ autoscaling:
 
 # Service configuration
 service:
-  type: LoadBalancer
+  type: ClusterIP
   port: 8080
   targetPort: 3000
   annotations: {}
@@ -77,7 +80,7 @@ healthCheck:
     failureThreshold: 3
   readinessProbe:
     httpGet:
-      path: /ready
+      path: /health
       port: 3000
     initialDelaySeconds: 10
     periodSeconds: 5

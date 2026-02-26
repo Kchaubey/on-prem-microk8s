@@ -1,34 +1,88 @@
 projectName: "doctor-web"
 projectNamespace: "healthjini"
+
 image:
-  repository: "docker.merai.app/production/doctor_web"
-  tag: "dmz-green"
+  repository: "harbor.k8s.healthjini.ai:30443/production/doctor_web"
+  tag: "green"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets:
+  - name: gitlab-registry-secret
+
+secrets:
+  name: healthjini-backend-secrets
+
+configMap:
+  name: healthjini-backend-config
+
 service:
-  type: LoadBalancer
-  port: 8001
-  targetPort: 3000
+  type: ClusterIP
+  port: 8005
+  targetPort: 8080
+
+ingress:
+  enabled: true
+  className: "nginx"
+  hosts:
+    - host: "doctor.k8s.healthjini.ai"
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: backend-tls
+      hosts:
+        - doctor.k8s.healthjini.ai
+
 healthCheck:
   enabled: true
   livenessProbe:
     httpGet:
       path: /health
-      port: 3000
+      port: 8080
+    initialDelaySeconds: 30
+    timeoutSeconds: 5
+    periodSeconds: 10
+    successThreshold: 1
+    failureThreshold: 3
   readinessProbe:
     httpGet:
-      path: /ready
-      port: 3000
-ingress:
-  enabled: false
+      path: /health
+      port: 8080
+    initialDelaySeconds: 10
+    timeoutSeconds: 3
+    periodSeconds: 5
+    successThreshold: 1
+    failureThreshold: 3
+
 autoscaling:
   enabled: true
-  minReplicas: 1
-  maxReplicas: 2
+  minReplicas: 2
+  maxReplicas: 3
+
 resources:
   limits:
+    cpu: 1000m
+    memory: 1024Mi
+  requests:
     cpu: 500m
     memory: 512Mi
-  requests:
-    cpu: 250m
-    memory: 256Mi
+
 nodeSelector:
   workload-type: prodapp
+
+# Pod-level security context
+# fsGroup: 1000 ensures Prisma and volume file permissions work correctly for uid 1000
+securityContext:
+  fsGroup: 1000
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+
+# Container-level security context
+# Required to satisfy cluster non-root admission policy
+containerSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false  # Must stay false — Prisma writes query engine at runtime

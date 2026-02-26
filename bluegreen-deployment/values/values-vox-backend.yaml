@@ -10,15 +10,12 @@ imagePullSecrets:
   - name: gitlab-registry-secret
 
 secrets:
-  name: ""
-
-configMap:
-  name: ""
+  name: healthjini-vox-secrets
 
 service:
   type: ClusterIP
   port: 8021
-  targetPort: 8080
+  targetPort: 8021
 
 ingress:
   enabled: false
@@ -28,7 +25,7 @@ healthCheck:
   livenessProbe:
     httpGet:
       path: /health
-      port: 8080
+      port: 8021
     initialDelaySeconds: 30
     timeoutSeconds: 5
     periodSeconds: 10
@@ -37,7 +34,7 @@ healthCheck:
   readinessProbe:
     httpGet:
       path: /health
-      port: 8080
+      port: 8021
     initialDelaySeconds: 10
     timeoutSeconds: 3
     periodSeconds: 5

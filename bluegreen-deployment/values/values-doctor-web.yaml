@@ -10,15 +10,12 @@ imagePullSecrets:
   - name: gitlab-registry-secret
 
 secrets:
-  name: healthjini-backend-secrets
-
-configMap:
-  name: healthjini-backend-config
+  name: healthjini-doctor-secrets
 
 service:
   type: ClusterIP
   port: 8005
-  targetPort: 8080
+  targetPort: 8005
 
 ingress:
   enabled: true
@@ -38,7 +35,7 @@ healthCheck:
   livenessProbe:
     httpGet:
       path: /health
-      port: 8080
+      port: 8005
     initialDelaySeconds: 30
     timeoutSeconds: 5
     periodSeconds: 10
@@ -47,7 +44,7 @@ healthCheck:
   readinessProbe:
     httpGet:
       path: /health
-      port: 8080
+      port: 8005
     initialDelaySeconds: 10
     timeoutSeconds: 3
     periodSeconds: 5

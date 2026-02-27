@@ -28,6 +28,13 @@ replicaCount:
   blue: 2
   green: 2
 
+# Optional per-slot deployment strategy overrides.
+# Example:
+# deploymentStrategy:
+#   green:
+#     type: Recreate
+deploymentStrategy: {}
+
 # Container resources
 resources:
   limits:

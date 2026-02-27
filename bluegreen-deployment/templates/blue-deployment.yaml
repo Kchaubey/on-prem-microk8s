@@ -4,6 +4,8 @@
 {{- $secretName := (index $secrets "name") | default "" -}}
 {{- $configMapName := (index $configMap "name") | default "" -}}
 {{- $podSecurityContext := omit (.Values.securityContext | default dict) "allowPrivilegeEscalation" "readOnlyRootFilesystem" "capabilities" "privileged" -}}
+{{- $strategies := .Values.deploymentStrategy | default dict -}}
+{{- $blueStrategy := (index $strategies "blue") | default dict -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -16,6 +18,10 @@ metadata:
 spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount.blue }}
+  {{- end }}
+  {{- if $blueStrategy }}
+  strategy:
+{{ toYaml $blueStrategy | indent 4 }}
   {{- end }}
   selector:
     matchLabels:

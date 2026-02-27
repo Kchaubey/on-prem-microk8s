@@ -65,6 +65,12 @@ autoscaling:
   minReplicas: 2
   maxReplicas: 3
 
+# Reduce transient DB connection spikes during green rollout:
+# old green pods are terminated before new green pods are started.
+deploymentStrategy:
+  green:
+    type: Recreate
+
 resources:
   limits:
     cpu: 1000m

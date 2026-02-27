@@ -1,0 +1,390 @@
+# -------------------------------------------------
+# Blue-Green deployment pipeline (MicroK8s)
+# Flow: build -> deploy green candidate (blue active) -> test green -> switch to green
+# If switch verification fails, automatically rollback traffic to blue.
+# -------------------------------------------------
+
+variables:
+  # Optional override. If empty, CI_PROJECT_NAME will be sanitized for Helm release naming.
+  HELM_RELEASE_NAME: ""
+  # Fallback app name; actual app/service name is detected from values file projectName.
+  PROJECT_NAME: "frontend-web"
+  KUBE_NAMESPACE: "neuraiq"
+  KUBECONFIG: "/tmp/kube-config"
+  KUBECTL: "kubectl"
+  HELM_CHART_REPO: "https://gitlab-ci-token:${CI_JOB_TOKEN}@git.nuvoai.io/merai_blr1/helm-charts.git"
+  VALUES_FILE: "bluegreen-deployment/values/values-nurovision-frontend.yaml"
+  HELM_VERSION: "v3.19.4"
+  HELM_TIMEOUT: "10m"
+  HEALTH_PATH: "/health"
+
+# -------------------------------------------------
+# Common kubeconfig setup (MicroK8s API)
+# -------------------------------------------------
+.microk8s_setup: &microk8s_setup |
+  set -e
+
+  echo "$KUBE_CA_CERT" | base64 -d > /tmp/ca.crt
+
+  kubectl config set-cluster microk8s \
+    --server="$KUBE_URL" \
+    --certificate-authority=/tmp/ca.crt \
+    --kubeconfig=$KUBECONFIG
+
+  kubectl config set-credentials gitlab-admin \
+    --token="$KUBE_TOKEN" \
+    --kubeconfig=$KUBECONFIG
+
+  kubectl config set-context microk8s \
+    --cluster=microk8s \
+    --user=gitlab-admin \
+    --kubeconfig=$KUBECONFIG
+
+  kubectl config use-context microk8s --kubeconfig=$KUBECONFIG
+
+# -------------------------------------------------
+# Helm install helper
+# -------------------------------------------------
+.helm_setup: &helm_setup |
+  set -e
+  curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o /tmp/helm.tgz
+  tar -xzf /tmp/helm.tgz -C /tmp
+  chmod +x /tmp/linux-amd64/helm
+  export PATH="/tmp/linux-amd64:$PATH"
+  helm version
+
+# -------------------------------------------------
+# Resolve Helm release name (supports underscores in CI project names)
+# -------------------------------------------------
+.resolve_release_name: &resolve_release_name |
+  set -e
+  RAW_RELEASE_NAME="${HELM_RELEASE_NAME:-$CI_PROJECT_NAME}"
+  RELEASE_NAME=$(echo "$RAW_RELEASE_NAME" | tr '[:upper:]_' '[:lower:]-' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//; s/-+/-/g')
+
+  if [ -z "$RELEASE_NAME" ]; then
+    echo "Invalid Helm release name derived from '$RAW_RELEASE_NAME'"
+    exit 1
+  fi
+
+  echo "Using Helm release: $RELEASE_NAME (raw: $RAW_RELEASE_NAME)"
+
+# -------------------------------------------------
+# Detect app metadata from values file
+# -------------------------------------------------
+.detect_values_metadata: &detect_values_metadata |
+  set -e
+  APP_NAME=$(awk '/^projectName:/ {gsub(/"/, "", $2); print $2; exit}' "helm-repo/${VALUES_FILE}")
+  SERVICE_PORT=$(awk '
+    /^service:/ { in_service=1; next }
+    in_service && /^[^[:space:]]/ { in_service=0 }
+    in_service && $1 == "port:" { print $2; exit }
+  ' "helm-repo/${VALUES_FILE}")
+
+  if [ -z "$APP_NAME" ]; then
+    APP_NAME="$PROJECT_NAME"
+  fi
+
+  if [ -z "$APP_NAME" ]; then
+    echo "Failed to detect projectName from helm-repo/${VALUES_FILE}"
+    exit 1
+  fi
+
+  if [ -z "$SERVICE_PORT" ]; then
+    echo "Failed to detect service.port from helm-repo/${VALUES_FILE}"
+    exit 1
+  fi
+
+  echo "Detected APP_NAME=$APP_NAME"
+  echo "Detected SERVICE_PORT=$SERVICE_PORT"
+
+# =================================================
+# Deploy GREEN candidate (keep BLUE active)
+# =================================================
+deploy_green_candidate_k8s:
+  stage: deploy_K8s
+  image:
+    name: bitnami/kubectl:latest
+    entrypoint: [""]
+
+  needs:
+    - job: build_K8s
+      artifacts: true
+
+  script:
+    - *resolve_release_name
+    - '[ -n "$IMAGE_TAG" ] || IMAGE_TAG=$(echo "$CI_COMMIT_SHA" | cut -c1-8)'
+    - echo "Using IMAGE_TAG=$IMAGE_TAG"
+
+    - *helm_setup
+    - *microk8s_setup
+
+    # Registry secret (idempotent)
+    - |
+      kubectl create secret docker-registry gitlab-registry-secret \
+        --docker-server="$DMZ_REGISTRY_URL" \
+        --docker-username="$DMZ_REGISTRY_USER" \
+        --docker-password="$DMZ_REGISTRY_PASSWORD" \
+        -n "$KUBE_NAMESPACE" \
+        --dry-run=client -o yaml | kubectl apply -f -
+
+    # Clone Helm charts and detect metadata
+    - git clone "$HELM_CHART_REPO" helm-repo
+    - *detect_values_metadata
+
+    # Resolve baseline tags from current release:
+    # - If current live is green, copy green tag into blue tag first.
+    # - Deploy new commit tag to green and keep live traffic on blue for testing.
+    - |
+      CURRENT_ACTIVE_VERSION=""
+      CURRENT_IMAGE_TAG=""
+      CURRENT_BLUE_TAG=""
+      CURRENT_GREEN_TAG=""
+
+      if helm status "$RELEASE_NAME" -n "$KUBE_NAMESPACE" >/dev/null 2>&1; then
+        RELEASE_VALUES=$(helm get values "$RELEASE_NAME" -n "$KUBE_NAMESPACE" -o yaml)
+
+        CURRENT_ACTIVE_VERSION=$(echo "$RELEASE_VALUES" | awk '
+          /^blueGreen:/ { in_bg=1; next }
+          in_bg && /^[^[:space:]]/ { in_bg=0 }
+          in_bg && $1 == "activeVersion:" { gsub(/"/, "", $2); print $2; exit }
+        ')
+
+        CURRENT_IMAGE_TAG=$(echo "$RELEASE_VALUES" | awk '
+          /^image:/ { in_image=1; next }
+          in_image && /^[^[:space:]]/ { in_image=0 }
+          in_image && $1 == "tag:" { gsub(/"/, "", $2); print $2; exit }
+        ')
+
+        CURRENT_BLUE_TAG=$(echo "$RELEASE_VALUES" | awk '
+          /^image:/ { in_image=1; next }
+          in_image && /^[^[:space:]]/ { in_image=0 }
+          in_image && $1 == "blueTag:" { gsub(/"/, "", $2); print $2; exit }
+        ')
+
+        CURRENT_GREEN_TAG=$(echo "$RELEASE_VALUES" | awk '
+          /^image:/ { in_image=1; next }
+          in_image && /^[^[:space:]]/ { in_image=0 }
+          in_image && $1 == "greenTag:" { gsub(/"/, "", $2); print $2; exit }
+        ')
+      fi
+
+      [ -n "$CURRENT_BLUE_TAG" ] || CURRENT_BLUE_TAG="$CURRENT_IMAGE_TAG"
+      [ -n "$CURRENT_GREEN_TAG" ] || CURRENT_GREEN_TAG="$CURRENT_IMAGE_TAG"
+
+      if [ "$CURRENT_ACTIVE_VERSION" = "green" ] && [ -n "$CURRENT_GREEN_TAG" ]; then
+        BASE_BLUE_TAG="$CURRENT_GREEN_TAG"
+      else
+        BASE_BLUE_TAG="$CURRENT_BLUE_TAG"
+      fi
+
+      [ -n "$BASE_BLUE_TAG" ] || BASE_BLUE_TAG="$IMAGE_TAG"
+      BLUE_TAG="$BASE_BLUE_TAG"
+      GREEN_TAG="$IMAGE_TAG"
+
+      echo "Resolved BLUE_TAG=$BLUE_TAG"
+      echo "Resolved GREEN_TAG=$GREEN_TAG"
+
+      printf 'RELEASE_NAME=%s\nAPP_NAME=%s\nIMAGE_TAG=%s\nBLUE_TAG=%s\nGREEN_TAG=%s\nSERVICE_PORT=%s\n' \
+        "$RELEASE_NAME" "$APP_NAME" "$IMAGE_TAG" "$BLUE_TAG" "$GREEN_TAG" "$SERVICE_PORT" > k8s-deploy.env
+
+    # Deploy candidate to green, keep live traffic on blue
+    - |
+      helm upgrade --install "$RELEASE_NAME" \
+        helm-repo/bluegreen-deployment \
+        -n "$KUBE_NAMESPACE" \
+        -f "helm-repo/$VALUES_FILE" \
+        --set-string "image.tag=$IMAGE_TAG" \
+        --set-string "image.blueTag=$BLUE_TAG" \
+        --set-string "image.greenTag=$GREEN_TAG" \
+        --set-string "blueGreen.activeVersion=blue" \
+        --wait --timeout "$HELM_TIMEOUT"
+
+    - kubectl get pods -n "$KUBE_NAMESPACE" -l app="$APP_NAME" -o wide
+
+  artifacts:
+    reports:
+      dotenv: k8s-deploy.env
+    paths:
+      - k8s-deploy.env
+    expire_in: 2 hours
+
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "K8s-production"'
+
+  tags:
+    - A6000
+
+# =================================================
+# Smoke Test GREEN candidate
+# =================================================
+test_green_k8s:
+  stage: deploy_K8s
+  image:
+    name: bitnami/kubectl:latest
+    entrypoint: [""]
+
+  needs:
+    - job: deploy_green_candidate_k8s
+      artifacts: true
+
+  script:
+    - *helm_setup
+    - *microk8s_setup
+    - *resolve_release_name
+    - export APP_NAME="${APP_NAME:-$PROJECT_NAME}"
+    - export LOCAL_PORT=18005
+
+    - |
+      kubectl port-forward \
+        -n "$KUBE_NAMESPACE" \
+        "svc/${APP_NAME}-green-service" \
+        "${LOCAL_PORT}:${SERVICE_PORT}" >/tmp/pf-green.log 2>&1 &
+      PF_PID=$!
+
+      cleanup_pf() {
+        kill "$PF_PID" >/dev/null 2>&1 || true
+      }
+
+      trap cleanup_pf EXIT
+
+      sleep 5
+
+      ATTEMPT=1
+      until [ "$ATTEMPT" -gt 10 ]; do
+        if curl -fsS "http://127.0.0.1:${LOCAL_PORT}${HEALTH_PATH}"; then
+          echo "GREEN smoke test passed"
+          exit 0
+        fi
+
+        echo "Attempt ${ATTEMPT}/10 failed; retrying in 5s"
+        ATTEMPT=$((ATTEMPT + 1))
+        sleep 5
+      done
+
+      echo "GREEN smoke test failed"
+      cat /tmp/pf-green.log || true
+      exit 1
+
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "K8s-production"'
+
+  tags:
+    - A6000
+
+# =================================================
+# Promote GREEN traffic with automatic rollback to BLUE on failure
+# =================================================
+switch_traffic_green_k8s:
+  stage: deploy_K8s
+  image:
+    name: bitnami/kubectl:latest
+    entrypoint: [""]
+
+  needs:
+    - job: deploy_green_candidate_k8s
+      artifacts: true
+    - job: test_green_k8s
+      artifacts: true
+
+  script:
+    - *helm_setup
+    - *microk8s_setup
+    - *resolve_release_name
+    - git clone "$HELM_CHART_REPO" helm-repo
+    - *detect_values_metadata
+    - export APP_NAME="${APP_NAME:-$PROJECT_NAME}"
+    - export LOCAL_PORT=18006
+
+    - |
+      rollback_to_blue() {
+        echo "Promotion verification failed. Rolling traffic back to BLUE..."
+        helm upgrade "$RELEASE_NAME" \
+          helm-repo/bluegreen-deployment \
+          -n "$KUBE_NAMESPACE" \
+          --reuse-values \
+          --set-string "blueGreen.activeVersion=blue" \
+          --wait --timeout "$HELM_TIMEOUT" || true
+      }
+
+      echo "Switching live traffic to GREEN..."
+      if ! helm upgrade "$RELEASE_NAME" \
+        helm-repo/bluegreen-deployment \
+        -n "$KUBE_NAMESPACE" \
+        --reuse-values \
+        --set-string "blueGreen.activeVersion=green" \
+        --wait --timeout "$HELM_TIMEOUT"; then
+        rollback_to_blue
+        exit 1
+      fi
+
+      echo "Verifying live service after switch..."
+      kubectl port-forward \
+        -n "$KUBE_NAMESPACE" \
+        "svc/${APP_NAME}-service" \
+        "${LOCAL_PORT}:${SERVICE_PORT}" >/tmp/pf-live.log 2>&1 &
+      PF_PID=$!
+
+      cleanup_pf() {
+        kill "$PF_PID" >/dev/null 2>&1 || true
+      }
+
+      trap cleanup_pf EXIT
+
+      sleep 5
+
+      ATTEMPT=1
+      LIVE_OK=0
+      until [ "$ATTEMPT" -gt 10 ]; do
+        if curl -fsS "http://127.0.0.1:${LOCAL_PORT}${HEALTH_PATH}"; then
+          echo "GREEN is now live and healthy"
+          LIVE_OK=1
+          break
+        fi
+
+        echo "Live verification attempt ${ATTEMPT}/10 failed; retrying in 5s"
+        ATTEMPT=$((ATTEMPT + 1))
+        sleep 5
+      done
+
+      if [ "$LIVE_OK" -ne 1 ]; then
+        echo "Live verification failed after switching to GREEN"
+        cat /tmp/pf-live.log || true
+        rollback_to_blue
+        exit 1
+      fi
+
+    - kubectl get svc -n "$KUBE_NAMESPACE" | grep "$APP_NAME" || true
+
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "K8s-production"'
+
+  tags:
+    - A6000
+
+# =================================================
+# Manual rollback helper (if needed)
+# =================================================
+rollback_k8s_manual:
+  stage: deploy_K8s
+  when: manual
+  allow_failure: false
+
+  image:
+    name: bitnami/kubectl:latest
+    entrypoint: [""]
+
+  script:
+    - *resolve_release_name
+    - *helm_setup
+    - *microk8s_setup
+    - helm history "$RELEASE_NAME" -n "$KUBE_NAMESPACE"
+    - |
+      helm rollback "$RELEASE_NAME" \
+        --namespace "$KUBE_NAMESPACE" \
+        --wait --timeout "$HELM_TIMEOUT"
+
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "K8s-production"'
+
+  tags:
+    - A6000

@@ -21,7 +21,7 @@ helm upgrade --install doctor-web bluegreen-deployment \
 # Switch traffic from blue to green
 helm upgrade doctor-web bluegreen-deployment \
   -n production \
-  -f bluegreen-deployment/values/values-doctor-web.yaml \
+  --reuse-values \
   --set blueGreen.activeVersion=green
 ```
 

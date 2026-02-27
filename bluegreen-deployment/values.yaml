@@ -16,7 +16,8 @@ registry:
 # Image configuration
 image:
   repository: "harbor.k8s.healthjini.ai:30443/production/myapp"
-  tag: "latest"
+  # Must be provided via project values or CI --set; chart will fail if empty.
+  tag: ""
   # Optional per-slot tags. If unset, both deployments use image.tag.
   blueTag: ""
   greenTag: ""

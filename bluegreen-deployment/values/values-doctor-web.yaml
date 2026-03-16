@@ -11,6 +11,9 @@ imagePullSecrets:
 
 secrets:
   name: healthjini-doctor-secrets
+env:
+    - name: PORT
+      value: "8005"
 
 service:
   type: ClusterIP

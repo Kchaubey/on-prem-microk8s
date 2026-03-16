@@ -37,7 +37,7 @@ healthCheck:
   enabled: true
   livenessProbe:
     httpGet:
-      path: /health
+      path: /
       port: 8005
     initialDelaySeconds: 30
     timeoutSeconds: 5
@@ -46,7 +46,7 @@ healthCheck:
     failureThreshold: 3
   readinessProbe:
     httpGet:
-      path: /health
+      path: /
       port: 8005
     initialDelaySeconds: 10
     timeoutSeconds: 3

@@ -13,12 +13,12 @@ secrets:
   name: healthjini-doctor-secrets
 env:
     - name: PORT
-      value: "8005"
+      value: "8010"
 
 service:
   type: ClusterIP
-  port: 8005
-  targetPort: 8005
+  port: 8010
+  targetPort: 8010
 
 ingress:
   enabled: true
@@ -38,7 +38,7 @@ healthCheck:
   livenessProbe:
     httpGet:
       path: /
-      port: 8005
+      port: 8010
     initialDelaySeconds: 30
     timeoutSeconds: 5
     periodSeconds: 10
@@ -47,7 +47,7 @@ healthCheck:
   readinessProbe:
     httpGet:
       path: /
-      port: 8005
+      port: 8010
     initialDelaySeconds: 10
     timeoutSeconds: 3
     periodSeconds: 5

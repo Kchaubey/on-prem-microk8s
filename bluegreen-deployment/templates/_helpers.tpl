@@ -39,3 +39,13 @@ This avoids invalid specs when Helm deep-merges values from defaults and env fil
 {{- toYaml $out -}}
 {{- end -}}
 
+{{/*
+Validate and return active version for blue/green selectors.
+*/}}
+{{- define "bluegreen.activeVersion" -}}
+{{- $active := .Values.blueGreen.activeVersion | default "blue" -}}
+{{- if and (ne $active "blue") (ne $active "green") -}}
+{{- fail (printf "blueGreen.activeVersion must be 'blue' or 'green', got '%s'" $active) -}}
+{{- end -}}
+{{- $active -}}
+{{- end -}}

@@ -62,8 +62,13 @@ healthCheck:
 
 autoscaling:
   enabled: true
-  minReplicas: 2
+  minReplicas: 1
   maxReplicas: 3
+
+blueGreen:
+  activeVersion: blue
+  scaleDownInactive: true
+  inactiveReplicaCount: 0
 
 # Reduce transient DB connection spikes during green rollout:
 # old green pods are terminated before new green pods are started.

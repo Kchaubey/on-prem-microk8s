@@ -1,4 +1,9 @@
 {{- if .Values.autoscaling.enabled }}
+{{- $activeVersion := include "bluegreen.activeVersion" . -}}
+{{- $scaleDownInactive := .Values.blueGreen.scaleDownInactive | default false -}}
+{{- $renderBlueHPA := or (not $scaleDownInactive) (eq $activeVersion "blue") -}}
+{{- $renderGreenHPA := or (not $scaleDownInactive) (eq $activeVersion "green") -}}
+{{- if $renderBlueHPA }}
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -27,7 +32,11 @@ spec:
       target:
         type: Utilization
         averageUtilization: {{ .Values.autoscaling.targetMemoryUtilizationPercentage }}
+{{- end }}
+{{- if and $renderBlueHPA $renderGreenHPA }}
 ---
+{{- end }}
+{{- if $renderGreenHPA }}
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -56,4 +65,5 @@ spec:
       target:
         type: Utilization
         averageUtilization: {{ .Values.autoscaling.targetMemoryUtilizationPercentage }}
+{{- end }}
 {{- end }}

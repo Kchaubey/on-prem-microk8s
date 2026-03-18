@@ -43,8 +43,13 @@ healthCheck:
 
 autoscaling:
   enabled: true
-  minReplicas: 2
+  minReplicas: 1
   maxReplicas: 3
+
+blueGreen:
+  activeVersion: blue
+  scaleDownInactive: true
+  inactiveReplicaCount: 0
 
 resources:
   limits:

@@ -6,6 +6,10 @@
 {{- $podSecurityContext := omit (.Values.securityContext | default dict) "allowPrivilegeEscalation" "readOnlyRootFilesystem" "capabilities" "privileged" -}}
 {{- $strategies := .Values.deploymentStrategy | default dict -}}
 {{- $blueStrategy := (index $strategies "blue") | default dict -}}
+{{- $activeVersion := include "bluegreen.activeVersion" . -}}
+{{- $scaleDownInactive := .Values.blueGreen.scaleDownInactive | default false -}}
+{{- $inactiveReplicaCount := .Values.blueGreen.inactiveReplicaCount | default 0 -}}
+{{- $blueInactive := and $scaleDownInactive (ne $activeVersion "blue") -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -16,8 +20,8 @@ metadata:
     version: blue
     managed-by: helm
 spec:
-  {{- if not .Values.autoscaling.enabled }}
-  replicas: {{ .Values.replicaCount.blue }}
+  {{- if or (not .Values.autoscaling.enabled) $scaleDownInactive }}
+  replicas: {{ ternary $inactiveReplicaCount (ternary .Values.autoscaling.minReplicas .Values.replicaCount.blue .Values.autoscaling.enabled) $blueInactive }}
   {{- end }}
   {{- if $blueStrategy }}
   strategy:

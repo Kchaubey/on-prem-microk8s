@@ -1,3 +1,4 @@
+{{- $activeVersion := include "bluegreen.activeVersion" . -}}
 apiVersion: v1
 kind: Service
 metadata:
@@ -19,7 +20,7 @@ spec:
     name: http
   selector:
     app: {{ .Values.projectName }}
-    version: {{ .Values.blueGreen.activeVersion }}
+    version: {{ $activeVersion }}
 ---
 apiVersion: v1
 kind: Service

@@ -85,6 +85,7 @@ helm upgrade --install "${PROJECT_NAME}" \
     --set-string "image.blueTag=${BLUE_TAG}" \
     --set-string "image.greenTag=${GREEN_TAG}" \
     --set-string "blueGreen.activeVersion=${ACTIVE_VERSION}" \
+    --atomic \
     --wait \
     --timeout "$HELM_TIMEOUT"
 

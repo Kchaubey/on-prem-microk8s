@@ -98,6 +98,10 @@ healthCheck:
 # Blue-Green specific settings
 blueGreen:
   activeVersion: blue
+  # When true, only activeVersion keeps replicas/HPA.
+  # inactive version is scaled to inactiveReplicaCount (default 0).
+  scaleDownInactive: false
+  inactiveReplicaCount: 0
   canary:
     enabled: false
     weight: 10

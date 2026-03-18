@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [ "$#" -lt 2 ]; then
-    echo "Usage: $0 <project-name> <helm-chart-repo> [namespace] [target-version] [image-tag] [blue-tag] [green-tag] [helm-timeout]"
+    echo "Usage: $0 <project-name> <helm-chart-repo> [namespace] [target-version] [image-tag] [blue-tag] [green-tag] [helm-timeout] [warmup-replicas]"
     exit 1
 fi
 
@@ -14,6 +14,7 @@ IMAGE_TAG=${5:-}
 BLUE_TAG=${6:-}
 GREEN_TAG=${7:-}
 HELM_TIMEOUT=${8:-${HELM_TIMEOUT:-10m}}
+WARMUP_REPLICAS=${9:-1}
 CLONE_DIR="helm-repo"
 CHART_PATH=""
 CHART_CANDIDATES=(
@@ -23,6 +24,7 @@ CHART_CANDIDATES=(
 
 echo "Switching traffic to ${TARGET_VERSION} deployment..."
 echo "Helm Timeout: $HELM_TIMEOUT"
+echo "Warmup Replicas: $WARMUP_REPLICAS"
 echo "Reusing current release values to avoid image tag resets"
 
 if [ -z "${KUBECONFIG:-}" ]; then
@@ -33,6 +35,22 @@ fi
 if [ "$TARGET_VERSION" != "blue" ] && [ "$TARGET_VERSION" != "green" ]; then
     echo "Error: TARGET_VERSION must be 'blue' or 'green', got '$TARGET_VERSION'"
     exit 1
+fi
+
+if ! [[ "$WARMUP_REPLICAS" =~ ^[0-9]+$ ]]; then
+    echo "Error: WARMUP_REPLICAS must be a non-negative integer, got '$WARMUP_REPLICAS'"
+    exit 1
+fi
+
+TARGET_DEPLOYMENT="${PROJECT_NAME}-${TARGET_VERSION}"
+if kubectl get deployment "$TARGET_DEPLOYMENT" -n "$KUBE_NAMESPACE" >/dev/null 2>&1; then
+    if [ "$WARMUP_REPLICAS" -gt 0 ]; then
+        echo "Warming up ${TARGET_DEPLOYMENT} with ${WARMUP_REPLICAS} replica(s) before switching traffic..."
+        kubectl scale deployment "$TARGET_DEPLOYMENT" -n "$KUBE_NAMESPACE" --replicas="$WARMUP_REPLICAS"
+        kubectl rollout status deployment/"$TARGET_DEPLOYMENT" -n "$KUBE_NAMESPACE" --timeout="$HELM_TIMEOUT"
+    fi
+else
+    echo "Warning: deployment ${TARGET_DEPLOYMENT} not found in namespace ${KUBE_NAMESPACE}; skipping warmup"
 fi
 
 rm -rf "$CLONE_DIR"
@@ -58,6 +76,7 @@ HELM_ARGS=(
     -n "$KUBE_NAMESPACE"
     --set-string "blueGreen.activeVersion=${TARGET_VERSION}"
     --reuse-values
+    --atomic
     --wait
     --timeout "$HELM_TIMEOUT"
 )

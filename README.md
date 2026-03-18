@@ -25,6 +25,21 @@ helm upgrade doctor-web bluegreen-deployment \
   --set blueGreen.activeVersion=green
 ```
 
+For DB-sensitive backends, run single-active mode (inactive color scaled to `0`):
+
+```yaml
+blueGreen:
+  activeVersion: blue
+  scaleDownInactive: true
+  inactiveReplicaCount: 0
+```
+
+Then switch traffic safely with rollback:
+
+```bash
+./bluegreen-deployment/scripts/helm-switch-traffic.sh doctor-web <chart-repo> production green
+```
+
 ## Projects Included
 
 ### Health Gini Group

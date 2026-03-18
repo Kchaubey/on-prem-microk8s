@@ -197,7 +197,15 @@ deploy_green_candidate_k8s:
         --set-string "image.blueTag=$BLUE_TAG" \
         --set-string "image.greenTag=$GREEN_TAG" \
         --set-string "blueGreen.activeVersion=blue" \
+        --atomic \
         --wait --timeout "$HELM_TIMEOUT"
+
+    - |
+      # In single-active mode, green is scaled to 0 while blue is active.
+      # Warm green before smoke testing it.
+      GREEN_DEPLOYMENT="${APP_NAME}-green"
+      kubectl scale deployment "$GREEN_DEPLOYMENT" -n "$KUBE_NAMESPACE" --replicas=1
+      kubectl rollout status deployment/"$GREEN_DEPLOYMENT" -n "$KUBE_NAMESPACE" --timeout="$HELM_TIMEOUT"
 
     - kubectl get pods -n "$KUBE_NAMESPACE" -l app="$APP_NAME" -o wide
 
@@ -303,6 +311,7 @@ switch_traffic_green_k8s:
           -n "$KUBE_NAMESPACE" \
           --reuse-values \
           --set-string "blueGreen.activeVersion=blue" \
+          --atomic \
           --wait --timeout "$HELM_TIMEOUT" || true
       }
 
@@ -312,6 +321,7 @@ switch_traffic_green_k8s:
         -n "$KUBE_NAMESPACE" \
         --reuse-values \
         --set-string "blueGreen.activeVersion=green" \
+        --atomic \
         --wait --timeout "$HELM_TIMEOUT"; then
         rollback_to_blue
         exit 1

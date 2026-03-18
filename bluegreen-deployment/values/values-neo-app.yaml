@@ -46,6 +46,11 @@ autoscaling:
   minReplicas: 1
   maxReplicas: 3
 
+blueGreen:
+  activeVersion: green
+  scaleDownInactive: true
+  inactiveReplicaCount: 0
+
 resources:
   limits:
     cpu: 500m

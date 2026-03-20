@@ -21,7 +21,18 @@ service:
   targetPort: 8002
 
 ingress:
-  enabled: false
+  enabled: true
+  className: "nginx"
+  hosts:
+    - host: "admin.k8s.healthjini.ai"
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: backend-tls
+      hosts:
+        - admin.k8s.healthjini.ai
+
 
 healthCheck:
   enabled: true

@@ -33,7 +33,7 @@ ingress:
   tls:
     - secretName: backend-tls
       hosts:
-        - admin.k8s.healthjini.ai
+        - hospital.k8s.healthjini.ai
 
 
 healthCheck:

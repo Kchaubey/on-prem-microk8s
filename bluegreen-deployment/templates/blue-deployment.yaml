@@ -46,7 +46,14 @@ spec:
       securityContext:
 {{ toYaml $podSecurityContext | indent 8 }}
       {{- end }}
-
+      {{- if .Values.host}}
+      hostAliases:
+      {{- range .Values.host}}
+        - ip: {{ .ip }}
+          hostnames:
+            - {{ .domain }}
+      {{- end}}
+      {{- end}}
       containers:
         - name: {{ .Values.projectName }}
           image: "{{ .Values.image.repository }}:{{ $imageTag }}"

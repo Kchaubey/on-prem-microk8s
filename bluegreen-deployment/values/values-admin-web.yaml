@@ -13,27 +13,27 @@ secrets:
   name: healthjini-admin-secrets
 env:
     - name: PORT
-      value: "8002"
+      value: "8011"
 host:
   - ip: 10.120.130.43
     domain: "backend.k8s.healthjini.ai"
 service:
   type: ClusterIP
-  port: 8002
-  targetPort: 8002
+  port: 8011
+  targetPort: 8011
 
 ingress:
   enabled: true
   className: "nginx"
   hosts:
-    - host: "admin.k8s.healthjini.ai"
+    - host: "hospital.k8s.healthjini.ai"
       paths:
         - path: /
           pathType: Prefix
   tls:
     - secretName: backend-tls
       hosts:
-        - admin.k8s.healthjini.ai
+        - hospital.k8s.healthjini.ai
 
 
 healthCheck:
@@ -41,7 +41,7 @@ healthCheck:
   livenessProbe:
     httpGet:
       path: /health
-      port: 8002
+      port: 8011
     initialDelaySeconds: 30
     timeoutSeconds: 5
     periodSeconds: 10
@@ -50,7 +50,7 @@ healthCheck:
   readinessProbe:
     httpGet:
       path: /health
-      port: 8002
+      port: 8011
     initialDelaySeconds: 10
     timeoutSeconds: 3
     periodSeconds: 5

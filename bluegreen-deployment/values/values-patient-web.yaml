@@ -9,8 +9,7 @@ image:
 imagePullSecrets:
   - name: gitlab-registry-secret
 
-secrets:
-  name: healthjini-patient-secrets
+
 host:
   - ip: 10.120.130.43
     domain: "backend.k8s.healthjini.ai" 

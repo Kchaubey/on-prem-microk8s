@@ -8,7 +8,9 @@ image:
 
 imagePullSecrets:
   - name: gitlab-registry-secret
-
+env:
+  - name: NODE_TLS_REJECT_UNAUTHORIZED
+    value: "0"
 secrets:
   name: healthjini-patient-secrets
 host:

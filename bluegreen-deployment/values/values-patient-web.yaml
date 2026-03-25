@@ -11,21 +11,35 @@ imagePullSecrets:
 
 secrets:
   name: healthjini-patient-secrets
+host:
+  - ip: 10.120.130.43
+    domain: "backend.k8s.healthjini.ai" 
 
 service:
   type: ClusterIP
-  port: 8003
-  targetPort: 8003
+  port: 8020
+  targetPort: 8020
 
 ingress:
-  enabled: false
+  enabled: true
+  className: "nginx"
+  hosts:
+    - host: "patient.k8s.healthjini.ai"
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: backend-tls
+      hosts:
+        - patient.k8s.healthjini.ai
+
 
 healthCheck:
   enabled: true
   livenessProbe:
     httpGet:
       path: /health
-      port: 8003
+      port: 8020
     initialDelaySeconds: 30
     timeoutSeconds: 5
     periodSeconds: 10
@@ -34,7 +48,7 @@ healthCheck:
   readinessProbe:
     httpGet:
       path: /health
-      port: 8003
+      port: 8020
     initialDelaySeconds: 10
     timeoutSeconds: 3
     periodSeconds: 5
@@ -44,7 +58,7 @@ healthCheck:
 autoscaling:
   enabled: true
   minReplicas: 1
-  maxReplicas: 2
+  maxReplicas: 3
 
 blueGreen:
   activeVersion: green

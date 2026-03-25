@@ -50,7 +50,7 @@ healthCheck:
   readinessProbe:
     httpGet:
       path: /health
-      port: 8002
+      port: 8011
     initialDelaySeconds: 10
     timeoutSeconds: 3
     periodSeconds: 5

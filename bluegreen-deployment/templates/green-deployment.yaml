@@ -115,7 +115,7 @@ spec:
 {{ toYaml .Values.imagePullSecrets | indent 8 }}
       {{- else }}
       imagePullSecrets:
-        - name: gitlab-registry-secret
+        - name: registry-credentials
       {{- end }}
 
       {{- if .Values.nodeSelector }}

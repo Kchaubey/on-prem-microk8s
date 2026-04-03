@@ -1,0 +1,603 @@
+name: Blue-Green Deploy (MicroK8s)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "deploy = full deploy/test/promote flow, rollback = manual helm rollback"
+        required: true
+        type: choice
+        options:
+          - deploy
+          - rollback
+        default: deploy
+      image_tag:
+        description: "Optional image tag override for deploy operation"
+        required: false
+        type: string
+      helm_release_name:
+        description: "Optional Helm release name override"
+        required: false
+        type: string
+      rollback_revision:
+        description: "Optional Helm revision for rollback. Empty = previous revision"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  # ---- App/environment defaults (customize per project) ----
+  PROJECT_NAME: "my-app"
+  KUBE_NAMESPACE: "production"
+  VALUES_FILE: "bluegreen-deployment/values/values-sample.yaml"
+  HEALTH_PATH: "/health"
+
+  # Full git clone URL to helm chart repo (set in GitHub Variables)
+  HELM_CHART_REPO: ${{ vars.HELM_CHART_REPO }}
+
+  # Optional static release override. If empty, repo name is sanitized.
+  HELM_RELEASE_NAME: ""
+
+  # Tool/runtime settings
+  KUBECONFIG: "/tmp/kube-config"
+  HELM_VERSION: "v3.19.4"
+  KUBECTL_VERSION: "v1.30.6"
+  HELM_TIMEOUT: "10m"
+
+concurrency:
+  group: bluegreen-${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: false
+
+# For on-prem MicroK8s access, use a self-hosted Linux runner with network reachability to the cluster API.
+jobs:
+  build_k8s:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.operation == 'deploy' }}
+    runs-on: [self-hosted, linux]
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+    steps:
+      - name: Resolve image tag
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.image_tag }}" ]; then
+            IMAGE_TAG="${{ inputs.image_tag }}"
+          else
+            IMAGE_TAG="$(echo "${GITHUB_SHA}" | cut -c1-8)"
+          fi
+
+          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "Using IMAGE_TAG=${IMAGE_TAG}"
+
+      - name: Placeholder build stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Add your container build/push logic here if this workflow lives in the app repository."
+          echo "Current deployment will use image tag: ${{ steps.meta.outputs.image_tag }}"
+
+  deploy_green_candidate_k8s:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.operation == 'deploy' }}
+    needs:
+      - build_k8s
+    runs-on: [self-hosted, linux]
+    outputs:
+      release_name: ${{ steps.release.outputs.release_name }}
+      app_name: ${{ steps.detect.outputs.app_name }}
+      service_port: ${{ steps.detect.outputs.service_port }}
+      image_tag: ${{ needs.build_k8s.outputs.image_tag }}
+      blue_tag: ${{ steps.tags.outputs.blue_tag }}
+      green_tag: ${{ steps.tags.outputs.green_tag }}
+    steps:
+      - name: Install kubectl and Helm
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /tmp/kubectl
+          chmod +x /tmp/kubectl
+          echo "/tmp" >> "$GITHUB_PATH"
+
+          curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o /tmp/helm.tgz
+          tar -xzf /tmp/helm.tgz -C /tmp
+          chmod +x /tmp/linux-amd64/helm
+          echo "/tmp/linux-amd64" >> "$GITHUB_PATH"
+
+          /tmp/kubectl version --client --output=yaml | head -n 5
+          /tmp/linux-amd64/helm version
+
+      - name: Configure kubeconfig
+        shell: bash
+        env:
+          KUBE_URL: ${{ secrets.KUBE_URL }}
+          KUBE_CA_CERT: ${{ secrets.KUBE_CA_CERT }}
+          KUBE_TOKEN: ${{ secrets.KUBE_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          : "${KUBE_URL:?Missing secret KUBE_URL}"
+          : "${KUBE_CA_CERT:?Missing secret KUBE_CA_CERT}"
+          : "${KUBE_TOKEN:?Missing secret KUBE_TOKEN}"
+
+          echo "$KUBE_CA_CERT" | base64 -d > /tmp/ca.crt
+
+          kubectl config set-cluster microk8s \
+            --server="$KUBE_URL" \
+            --certificate-authority=/tmp/ca.crt \
+            --kubeconfig="$KUBECONFIG"
+
+          kubectl config set-credentials github-actions \
+            --token="$KUBE_TOKEN" \
+            --kubeconfig="$KUBECONFIG"
+
+          kubectl config set-context microk8s \
+            --cluster=microk8s \
+            --user=github-actions \
+            --kubeconfig="$KUBECONFIG"
+
+          kubectl config use-context microk8s --kubeconfig="$KUBECONFIG"
+          kubectl get nodes -o wide
+
+      - name: Resolve Helm release name
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          INPUT_RELEASE="${{ inputs.helm_release_name }}"
+          RAW_RELEASE_NAME="${INPUT_RELEASE:-${HELM_RELEASE_NAME:-${GITHUB_REPOSITORY##*/}}}"
+          RELEASE_NAME="$(echo "$RAW_RELEASE_NAME" | tr '[:upper:]_' '[:lower:]-' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//; s/-+/-/g')"
+
+          if [ -z "$RELEASE_NAME" ]; then
+            echo "Invalid Helm release name derived from '$RAW_RELEASE_NAME'"
+            exit 1
+          fi
+
+          echo "release_name=${RELEASE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "Using Helm release: ${RELEASE_NAME} (raw: ${RAW_RELEASE_NAME})"
+
+      - name: Validate required configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${HELM_CHART_REPO:?Set repository variable HELM_CHART_REPO (full clone URL)}"
+          : "${VALUES_FILE:?Set VALUES_FILE env variable}"
+
+      - name: Create registry pull secret (idempotent)
+        shell: bash
+        env:
+          DMZ_REGISTRY_URL: ${{ secrets.DMZ_REGISTRY_URL }}
+          DMZ_REGISTRY_USER: ${{ secrets.DMZ_REGISTRY_USER }}
+          DMZ_REGISTRY_PASSWORD: ${{ secrets.DMZ_REGISTRY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          : "${DMZ_REGISTRY_URL:?Missing secret DMZ_REGISTRY_URL}"
+          : "${DMZ_REGISTRY_USER:?Missing secret DMZ_REGISTRY_USER}"
+          : "${DMZ_REGISTRY_PASSWORD:?Missing secret DMZ_REGISTRY_PASSWORD}"
+
+          kubectl create secret docker-registry registry-credentials \
+            --docker-server="$DMZ_REGISTRY_URL" \
+            --docker-username="$DMZ_REGISTRY_USER" \
+            --docker-password="$DMZ_REGISTRY_PASSWORD" \
+            -n "$KUBE_NAMESPACE" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Clone Helm charts
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf helm-repo
+          git clone "$HELM_CHART_REPO" helm-repo
+
+      - name: Detect app metadata from values file
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APP_NAME="$(awk '/^projectName:/ {gsub(/"/, "", $2); print $2; exit}' "helm-repo/${VALUES_FILE}")"
+          SERVICE_PORT="$(awk '
+            /^service:/ { in_service=1; next }
+            in_service && /^[^[:space:]]/ { in_service=0 }
+            in_service && $1 == "port:" { print $2; exit }
+          ' "helm-repo/${VALUES_FILE}")"
+
+          if [ -z "$APP_NAME" ]; then
+            APP_NAME="$PROJECT_NAME"
+          fi
+
+          if [ -z "$APP_NAME" ] || [ -z "$SERVICE_PORT" ]; then
+            echo "Failed to detect app metadata from helm-repo/${VALUES_FILE}"
+            exit 1
+          fi
+
+          echo "app_name=${APP_NAME}" >> "$GITHUB_OUTPUT"
+          echo "service_port=${SERVICE_PORT}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve blue/green tags from current release
+        id: tags
+        shell: bash
+        env:
+          IMAGE_TAG: ${{ needs.build_k8s.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+
+          RELEASE_NAME="${{ steps.release.outputs.release_name }}"
+
+          CURRENT_ACTIVE_VERSION=""
+          CURRENT_IMAGE_TAG=""
+          CURRENT_BLUE_TAG=""
+          CURRENT_GREEN_TAG=""
+
+          if helm status "$RELEASE_NAME" -n "$KUBE_NAMESPACE" >/dev/null 2>&1; then
+            RELEASE_VALUES="$(helm get values "$RELEASE_NAME" -n "$KUBE_NAMESPACE" -o yaml)"
+
+            CURRENT_ACTIVE_VERSION="$(echo "$RELEASE_VALUES" | awk '
+              /^blueGreen:/ { in_bg=1; next }
+              in_bg && /^[^[:space:]]/ { in_bg=0 }
+              in_bg && $1 == "activeVersion:" { gsub(/"/, "", $2); print $2; exit }
+            ')"
+
+            CURRENT_IMAGE_TAG="$(echo "$RELEASE_VALUES" | awk '
+              /^image:/ { in_image=1; next }
+              in_image && /^[^[:space:]]/ { in_image=0 }
+              in_image && $1 == "tag:" { gsub(/"/, "", $2); print $2; exit }
+            ')"
+
+            CURRENT_BLUE_TAG="$(echo "$RELEASE_VALUES" | awk '
+              /^image:/ { in_image=1; next }
+              in_image && /^[^[:space:]]/ { in_image=0 }
+              in_image && $1 == "blueTag:" { gsub(/"/, "", $2); print $2; exit }
+            ')"
+
+            CURRENT_GREEN_TAG="$(echo "$RELEASE_VALUES" | awk '
+              /^image:/ { in_image=1; next }
+              in_image && /^[^[:space:]]/ { in_image=0 }
+              in_image && $1 == "greenTag:" { gsub(/"/, "", $2); print $2; exit }
+            ')"
+          fi
+
+          [ -n "$CURRENT_BLUE_TAG" ] || CURRENT_BLUE_TAG="$CURRENT_IMAGE_TAG"
+          [ -n "$CURRENT_GREEN_TAG" ] || CURRENT_GREEN_TAG="$CURRENT_IMAGE_TAG"
+
+          if [ "$CURRENT_ACTIVE_VERSION" = "green" ] && [ -n "$CURRENT_GREEN_TAG" ]; then
+            BASE_BLUE_TAG="$CURRENT_GREEN_TAG"
+          else
+            BASE_BLUE_TAG="$CURRENT_BLUE_TAG"
+          fi
+
+          [ -n "$BASE_BLUE_TAG" ] || BASE_BLUE_TAG="$IMAGE_TAG"
+          BLUE_TAG="$BASE_BLUE_TAG"
+          GREEN_TAG="$IMAGE_TAG"
+
+          echo "blue_tag=${BLUE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "green_tag=${GREEN_TAG}" >> "$GITHUB_OUTPUT"
+
+          echo "Resolved BLUE_TAG=${BLUE_TAG}"
+          echo "Resolved GREEN_TAG=${GREEN_TAG}"
+
+      - name: Deploy candidate to green while blue remains active
+        shell: bash
+        env:
+          RELEASE_NAME: ${{ steps.release.outputs.release_name }}
+          IMAGE_TAG: ${{ needs.build_k8s.outputs.image_tag }}
+          BLUE_TAG: ${{ steps.tags.outputs.blue_tag }}
+          GREEN_TAG: ${{ steps.tags.outputs.green_tag }}
+        run: |
+          set -euo pipefail
+
+          helm upgrade --install "$RELEASE_NAME" \
+            helm-repo/bluegreen-deployment \
+            -n "$KUBE_NAMESPACE" \
+            -f "helm-repo/$VALUES_FILE" \
+            --set-string "image.tag=$IMAGE_TAG" \
+            --set-string "image.blueTag=$BLUE_TAG" \
+            --set-string "image.greenTag=$GREEN_TAG" \
+            --set-string "blueGreen.activeVersion=blue" \
+            --atomic \
+            --wait --timeout "$HELM_TIMEOUT"
+
+      - name: Warm green before smoke test
+        shell: bash
+        env:
+          APP_NAME: ${{ steps.detect.outputs.app_name }}
+        run: |
+          set -euo pipefail
+
+          GREEN_DEPLOYMENT="${APP_NAME}-green"
+          kubectl scale deployment "$GREEN_DEPLOYMENT" -n "$KUBE_NAMESPACE" --replicas=1
+          kubectl rollout status deployment/"$GREEN_DEPLOYMENT" -n "$KUBE_NAMESPACE" --timeout="$HELM_TIMEOUT"
+          kubectl get pods -n "$KUBE_NAMESPACE" -l app="$APP_NAME" -o wide
+
+  test_green_k8s:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.operation == 'deploy' }}
+    needs:
+      - deploy_green_candidate_k8s
+    runs-on: [self-hosted, linux]
+    steps:
+      - name: Install kubectl
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /tmp/kubectl
+          chmod +x /tmp/kubectl
+          echo "/tmp" >> "$GITHUB_PATH"
+          /tmp/kubectl version --client --output=yaml | head -n 5
+
+      - name: Configure kubeconfig
+        shell: bash
+        env:
+          KUBE_URL: ${{ secrets.KUBE_URL }}
+          KUBE_CA_CERT: ${{ secrets.KUBE_CA_CERT }}
+          KUBE_TOKEN: ${{ secrets.KUBE_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          echo "$KUBE_CA_CERT" | base64 -d > /tmp/ca.crt
+
+          kubectl config set-cluster microk8s \
+            --server="$KUBE_URL" \
+            --certificate-authority=/tmp/ca.crt \
+            --kubeconfig="$KUBECONFIG"
+
+          kubectl config set-credentials github-actions \
+            --token="$KUBE_TOKEN" \
+            --kubeconfig="$KUBECONFIG"
+
+          kubectl config set-context microk8s \
+            --cluster=microk8s \
+            --user=github-actions \
+            --kubeconfig="$KUBECONFIG"
+
+          kubectl config use-context microk8s --kubeconfig="$KUBECONFIG"
+
+      - name: Smoke test green service
+        shell: bash
+        env:
+          APP_NAME: ${{ needs.deploy_green_candidate_k8s.outputs.app_name }}
+          SERVICE_PORT: ${{ needs.deploy_green_candidate_k8s.outputs.service_port }}
+        run: |
+          set -euo pipefail
+
+          LOCAL_PORT=18005
+
+          kubectl port-forward \
+            -n "$KUBE_NAMESPACE" \
+            "svc/${APP_NAME}-green-service" \
+            "${LOCAL_PORT}:${SERVICE_PORT}" >/tmp/pf-green.log 2>&1 &
+          PF_PID=$!
+
+          cleanup_pf() {
+            kill "$PF_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup_pf EXIT
+
+          sleep 5
+
+          ATTEMPT=1
+          until [ "$ATTEMPT" -gt 10 ]; do
+            if curl -fsS "http://127.0.0.1:${LOCAL_PORT}${HEALTH_PATH}"; then
+              echo "GREEN smoke test passed"
+              exit 0
+            fi
+
+            echo "Attempt ${ATTEMPT}/10 failed; retrying in 5s"
+            ATTEMPT=$((ATTEMPT + 1))
+            sleep 5
+          done
+
+          echo "GREEN smoke test failed"
+          cat /tmp/pf-green.log || true
+          exit 1
+
+  switch_traffic_green_k8s:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.operation == 'deploy' }}
+    needs:
+      - deploy_green_candidate_k8s
+      - test_green_k8s
+    runs-on: [self-hosted, linux]
+    steps:
+      - name: Install kubectl and Helm
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /tmp/kubectl
+          chmod +x /tmp/kubectl
+          echo "/tmp" >> "$GITHUB_PATH"
+
+          curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o /tmp/helm.tgz
+          tar -xzf /tmp/helm.tgz -C /tmp
+          chmod +x /tmp/linux-amd64/helm
+          echo "/tmp/linux-amd64" >> "$GITHUB_PATH"
+
+      - name: Configure kubeconfig
+        shell: bash
+        env:
+          KUBE_URL: ${{ secrets.KUBE_URL }}
+          KUBE_CA_CERT: ${{ secrets.KUBE_CA_CERT }}
+          KUBE_TOKEN: ${{ secrets.KUBE_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          echo "$KUBE_CA_CERT" | base64 -d > /tmp/ca.crt
+
+          kubectl config set-cluster microk8s \
+            --server="$KUBE_URL" \
+            --certificate-authority=/tmp/ca.crt \
+            --kubeconfig="$KUBECONFIG"
+
+          kubectl config set-credentials github-actions \
+            --token="$KUBE_TOKEN" \
+            --kubeconfig="$KUBECONFIG"
+
+          kubectl config set-context microk8s \
+            --cluster=microk8s \
+            --user=github-actions \
+            --kubeconfig="$KUBECONFIG"
+
+          kubectl config use-context microk8s --kubeconfig="$KUBECONFIG"
+
+      - name: Clone Helm charts
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf helm-repo
+          git clone "$HELM_CHART_REPO" helm-repo
+
+      - name: Promote live traffic to green (with automatic rollback)
+        shell: bash
+        env:
+          RELEASE_NAME: ${{ needs.deploy_green_candidate_k8s.outputs.release_name }}
+          APP_NAME: ${{ needs.deploy_green_candidate_k8s.outputs.app_name }}
+          SERVICE_PORT: ${{ needs.deploy_green_candidate_k8s.outputs.service_port }}
+        run: |
+          set -euo pipefail
+
+          LOCAL_PORT=18006
+
+          rollback_to_blue() {
+            echo "Promotion verification failed. Rolling traffic back to BLUE..."
+            helm upgrade "$RELEASE_NAME" \
+              helm-repo/bluegreen-deployment \
+              -n "$KUBE_NAMESPACE" \
+              --reuse-values \
+              --set-string "blueGreen.activeVersion=blue" \
+              --atomic \
+              --wait --timeout "$HELM_TIMEOUT" || true
+          }
+
+          echo "Switching live traffic to GREEN..."
+          if ! helm upgrade "$RELEASE_NAME" \
+            helm-repo/bluegreen-deployment \
+            -n "$KUBE_NAMESPACE" \
+            --reuse-values \
+            --set-string "blueGreen.activeVersion=green" \
+            --atomic \
+            --wait --timeout "$HELM_TIMEOUT"; then
+            rollback_to_blue
+            exit 1
+          fi
+
+          echo "Verifying live service after switch..."
+          kubectl port-forward \
+            -n "$KUBE_NAMESPACE" \
+            "svc/${APP_NAME}-service" \
+            "${LOCAL_PORT}:${SERVICE_PORT}" >/tmp/pf-live.log 2>&1 &
+          PF_PID=$!
+
+          cleanup_pf() {
+            kill "$PF_PID" >/dev/null 2>&1 || true
+          }
+          trap cleanup_pf EXIT
+
+          sleep 5
+
+          ATTEMPT=1
+          LIVE_OK=0
+          until [ "$ATTEMPT" -gt 10 ]; do
+            if curl -fsS "http://127.0.0.1:${LOCAL_PORT}${HEALTH_PATH}"; then
+              echo "GREEN is now live and healthy"
+              LIVE_OK=1
+              break
+            fi
+
+            echo "Live verification attempt ${ATTEMPT}/10 failed; retrying in 5s"
+            ATTEMPT=$((ATTEMPT + 1))
+            sleep 5
+          done
+
+          if [ "$LIVE_OK" -ne 1 ]; then
+            echo "Live verification failed after switching to GREEN"
+            cat /tmp/pf-live.log || true
+            rollback_to_blue
+            exit 1
+          fi
+
+          kubectl get svc -n "$KUBE_NAMESPACE" | grep "$APP_NAME" || true
+
+  rollback_k8s_manual:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'rollback' }}
+    runs-on: [self-hosted, linux]
+    steps:
+      - name: Install kubectl and Helm
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /tmp/kubectl
+          chmod +x /tmp/kubectl
+          echo "/tmp" >> "$GITHUB_PATH"
+
+          curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o /tmp/helm.tgz
+          tar -xzf /tmp/helm.tgz -C /tmp
+          chmod +x /tmp/linux-amd64/helm
+          echo "/tmp/linux-amd64" >> "$GITHUB_PATH"
+
+      - name: Configure kubeconfig
+        shell: bash
+        env:
+          KUBE_URL: ${{ secrets.KUBE_URL }}
+          KUBE_CA_CERT: ${{ secrets.KUBE_CA_CERT }}
+          KUBE_TOKEN: ${{ secrets.KUBE_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          echo "$KUBE_CA_CERT" | base64 -d > /tmp/ca.crt
+
+          kubectl config set-cluster microk8s \
+            --server="$KUBE_URL" \
+            --certificate-authority=/tmp/ca.crt \
+            --kubeconfig="$KUBECONFIG"
+
+          kubectl config set-credentials github-actions \
+            --token="$KUBE_TOKEN" \
+            --kubeconfig="$KUBECONFIG"
+
+          kubectl config set-context microk8s \
+            --cluster=microk8s \
+            --user=github-actions \
+            --kubeconfig="$KUBECONFIG"
+
+          kubectl config use-context microk8s --kubeconfig="$KUBECONFIG"
+
+      - name: Resolve Helm release name
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          INPUT_RELEASE="${{ inputs.helm_release_name }}"
+          RAW_RELEASE_NAME="${INPUT_RELEASE:-${HELM_RELEASE_NAME:-${GITHUB_REPOSITORY##*/}}}"
+          RELEASE_NAME="$(echo "$RAW_RELEASE_NAME" | tr '[:upper:]_' '[:lower:]-' | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//; s/-+/-/g')"
+
+          if [ -z "$RELEASE_NAME" ]; then
+            echo "Invalid Helm release name derived from '$RAW_RELEASE_NAME'"
+            exit 1
+          fi
+
+          echo "release_name=${RELEASE_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Manual rollback
+        shell: bash
+        env:
+          RELEASE_NAME: ${{ steps.release.outputs.release_name }}
+          ROLLBACK_REVISION: ${{ inputs.rollback_revision }}
+        run: |
+          set -euo pipefail
+
+          helm history "$RELEASE_NAME" -n "$KUBE_NAMESPACE"
+
+          if [ -n "${ROLLBACK_REVISION}" ]; then
+            helm rollback "$RELEASE_NAME" "$ROLLBACK_REVISION" -n "$KUBE_NAMESPACE" --wait --timeout "$HELM_TIMEOUT"
+          else
+            helm rollback "$RELEASE_NAME" -n "$KUBE_NAMESPACE" --wait --timeout "$HELM_TIMEOUT"
+          fi

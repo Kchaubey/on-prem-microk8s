@@ -8,12 +8,12 @@ variables:
   # Optional override. If empty, CI_PROJECT_NAME will be sanitized for Helm release naming.
   HELM_RELEASE_NAME: ""
   # Fallback app name; actual app/service name is detected from values file projectName.
-  PROJECT_NAME: "super-admin-web"
+  PROJECT_NAME: "my-app"
   KUBE_NAMESPACE: "production"
   KUBECONFIG: "/tmp/kube-config"
   KUBECTL: "kubectl"
-  HELM_CHART_REPO: "https://gitlab-ci-token:${CI_JOB_TOKEN}@git.nuvoai.io/merai_blr1/helm-charts.git"
-  VALUES_FILE: "bluegreen-deployment/values/values-super-admin-web.yaml"
+  HELM_CHART_REPO: "https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.example.com/your-group/helm-charts.git"
+  VALUES_FILE: "bluegreen-deployment/values/values-sample.yaml"
   HELM_VERSION: "v3.19.4"
   HELM_TIMEOUT: "10m"
   HEALTH_PATH: "/health"
@@ -120,7 +120,7 @@ deploy_green_candidate_k8s:
 
     # Registry secret (idempotent)
     - |
-      kubectl create secret docker-registry gitlab-registry-secret \
+      kubectl create secret docker-registry registry-credentials \
         --docker-server="$DMZ_REGISTRY_URL" \
         --docker-username="$DMZ_REGISTRY_USER" \
         --docker-password="$DMZ_REGISTRY_PASSWORD" \
@@ -217,10 +217,10 @@ deploy_green_candidate_k8s:
     expire_in: 2 hours
 
   rules:
-    - if: '$CI_COMMIT_BRANCH == "K8s-production"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
 
   tags:
-    - A6000
+    - k8s-runner
 
 # =================================================
 # Smoke Test GREEN candidate
@@ -274,10 +274,10 @@ test_green_k8s:
       exit 1
 
   rules:
-    - if: '$CI_COMMIT_BRANCH == "K8s-production"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
 
   tags:
-    - A6000
+    - k8s-runner
 
 # =================================================
 # Promote GREEN traffic with automatic rollback to BLUE on failure
@@ -366,10 +366,10 @@ switch_traffic_green_k8s:
     - kubectl get svc -n "$KUBE_NAMESPACE" | grep "$APP_NAME" || true
 
   rules:
-    - if: '$CI_COMMIT_BRANCH == "K8s-production"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
 
   tags:
-    - A6000
+    - k8s-runner
 
 # =================================================
 # Manual rollback helper (if needed)
@@ -394,7 +394,7 @@ rollback_k8s_manual:
         --wait --timeout "$HELM_TIMEOUT"
 
   rules:
-    - if: '$CI_COMMIT_BRANCH == "K8s-production"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
 
   tags:
-    - A6000
+    - k8s-runner

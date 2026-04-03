@@ -1,0 +1,107 @@
+projectName: "my-app"
+projectNamespace: "production"
+
+image:
+  repository: "registry.example.com:5000/production/my-app"
+  # CI typically overrides this tag during deployment.
+  tag: "v1.0.0"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets:
+  - name: registry-credentials
+
+# Optional: existing secret/configmap to load environment variables
+secrets:
+  name: my-app-secrets
+
+configMap:
+  name: my-app-config
+
+service:
+  type: ClusterIP
+  port: 8080
+  targetPort: 8080
+
+ingress:
+  enabled: true
+  className: "nginx"
+  hosts:
+    - host: "my-app.k8s.example.com"
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: my-app-tls
+      hosts:
+        - my-app.k8s.example.com
+
+healthCheck:
+  enabled: true
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8080
+    initialDelaySeconds: 30
+    timeoutSeconds: 5
+    periodSeconds: 10
+    successThreshold: 1
+    failureThreshold: 3
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8080
+    initialDelaySeconds: 10
+    timeoutSeconds: 3
+    periodSeconds: 5
+    successThreshold: 1
+    failureThreshold: 3
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+
+blueGreen:
+  activeVersion: blue
+  # For DB-sensitive services, set true and keep inactive at 0.
+  scaleDownInactive: false
+  inactiveReplicaCount: 0
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1024Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+nodeSelector:
+  workload-type: apps
+
+securityContext:
+  fsGroup: 1000
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+
+containerSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+
+# Optional custom host aliases
+# host:
+#   - ip: 10.0.0.10
+#     domain: "internal-api.example.local"
+
+# Optional extra env vars
+# env:
+#   - name: NODE_ENV
+#     value: "production"
+
+# Optional per-slot deployment strategy overrides
+# deploymentStrategy:
+#   green:
+#     type: Recreate

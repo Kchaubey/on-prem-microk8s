@@ -5,17 +5,16 @@ global:
 
 projectName: "myapp"
 projectNamespace: "production"
-projectGroup: "merai_blr1"
 
 # Docker Registry
 registry:
-  url: "harbor.k8s.healthjini.ai:30443"
+  url: "registry.example.com:5000"
   username: "${DMZ_REGISTRY_USER}"
   password: "${DMZ_REGISTRY_PASSWORD}"
 
 # Image configuration
 image:
-  repository: "harbor.k8s.healthjini.ai:30443/production/myapp"
+  repository: "registry.example.com:5000/production/myapp"
   # Must be provided via project values or CI --set; chart will fail if empty.
   tag: ""
   # Optional per-slot tags. If unset, both deployments use image.tag.

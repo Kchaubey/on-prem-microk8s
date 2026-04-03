@@ -1,6 +1,6 @@
 apiVersion: v2
 name: bluegreen-deployment
-description: A Helm chart for blue-green deployments with GitLab CI/CD integration
+description: A Helm chart for blue-green deployments with CI/CD integration
 type: application
 version: 1.0.0
 appVersion: "1.0"
@@ -10,5 +10,5 @@ keywords:
   - kubernetes
   - microk8s
 maintainers:
-  - name: DevOps Team
-    email: intern.kc@nuvo.ai
+  - name: Platform Team
+    email: devops@example.com
